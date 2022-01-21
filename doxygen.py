@@ -27,7 +27,9 @@
 import os
 import os.path
 import glob
+import shlex
 from fnmatch import fnmatch
+from functools import reduce
 
 # Currently supported output formats and their default
 # values and output locations.
@@ -54,7 +56,6 @@ def DoxyfileParse(file_contents, conf_dir, data=None):
     if data is None:
         data = {}
 
-    import shlex
     lex = shlex.shlex(instream=file_contents, posix=True)
     lex.wordchars += "*+./-:@"
     lex.whitespace = lex.whitespace.replace("\n", "")
@@ -106,7 +107,7 @@ def DoxyfileParse(file_contents, conf_dir, data=None):
                     raise Exception("recursive @INCLUDE in Doxygen config: " + nextfile)
                 data[key].append(nextfile)
                 fh = open(nextfile, 'r')
-                DoxyfileParse(fh.read(), conf_dir, data)
+                DoxyfileParse(fh, conf_dir, data)
                 fh.close()
             else:
                 append_data(data, key, new_data, token)
@@ -120,7 +121,7 @@ def DoxyfileParse(file_contents, conf_dir, data=None):
             append_data(data, key, new_data, '\\')
 
     # compress lists of len 1 into single strings
-    for (k, v) in data.items():
+    for (k, v) in list(data.items()):
         if len(v) == 0:
             data.pop(k)
 
@@ -158,7 +159,8 @@ def DoxySourceFiles(node, env):
     # go onto the sources list
     conf_dir = os.path.dirname(str(node))
 
-    data = DoxyfileParse(node.get_contents(), conf_dir)
+    fn = open(node.path, 'r')
+    data = DoxyfileParse(fn, conf_dir)
 
     if data.get("RECURSIVE", "NO") == "YES":
         recursive = True
@@ -241,7 +243,7 @@ def DoxySourceScan(node, env, path):
     any files used to generate docs to the list of source files.
     """
     filepaths = DoxySourceFiles(node, env)
-    sources = map(lambda path: env.File(path), filepaths)
+    sources = [env.File(path) for path in filepaths]
     return sources
 
 
@@ -254,7 +256,8 @@ def DoxyEmitter(target, source, env):
     """Doxygen Doxyfile emitter"""
     doxy_fpath = str(source[0])
     conf_dir = os.path.dirname(doxy_fpath)
-    data = DoxyfileParse(source[0].get_contents(), conf_dir)
+    fh = open(source[0].path, 'r')
+    data = DoxyfileParse(fh, conf_dir)
 
     targets = []
     out_dir = data.get("OUTPUT_DIRECTORY", ".")
@@ -262,7 +265,7 @@ def DoxyEmitter(target, source, env):
         out_dir = os.path.join(conf_dir, out_dir)
 
     # add our output locations
-    for (k, v) in output_formats.items():
+    for (k, v) in list(output_formats.items()):
         if data.get("GENERATE_" + k, v[0]) == "YES":
             # Initialize output file extension for MAN pages
             if k == 'MAN':
@@ -337,7 +340,7 @@ def generate(env):
 
     import SCons.Builder
     doxyfile_builder = SCons.Builder.Builder(
-        action="cd ${SOURCE.dir}  &&  ${DOXYGEN} ${SOURCE.file}",
+        action="${DOXYGEN} ${SOURCE}",
         emitter=DoxyEmitter,
         target_factory=env.fs.Entry,
         single_source=True,
